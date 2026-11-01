@@ -64,7 +64,7 @@ bool vk::loader::Open(std::string& error)
     g_description = android::driver::Description();
 #else
     // A desktop build with dynamic loading asked for: the system's loader.
-    for (const char* name : { "libvulkan.so.1", "libvulkan.so" })
+    for (const char* name : { "@rpath/libMoltenVK.dylib", "libMoltenVK.dylib", "libvulkan.1.dylib", "libvulkan.so.1", "libvulkan.so" })
     {
         void* library = dlopen(name, RTLD_NOW | RTLD_LOCAL);
         if (!library) continue;

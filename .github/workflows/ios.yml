@@ -28,7 +28,7 @@ jobs:
 
       - name: Download MoltenVK & Vulkan Headers
         run: |
-          curl -L -o MoltenVK.tar https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11/MoltenVK-all.tar
+          curl -L -o MoltenVK.tar https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-all.tar
           tar -xf MoltenVK.tar
           git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
 

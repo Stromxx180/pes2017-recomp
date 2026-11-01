@@ -36,9 +36,18 @@ jobs:
 
       - name: Download MoltenVK & Vulkan Headers
         run: |
-          curl -L -o MoltenVK.tar https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-all.tar
+          curl -fL -o MoltenVK.tar https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-all.tar
           tar -xf MoltenVK.tar
           git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
+          # En v1.4.x no hay libMoltenVK.dylib para iOS: se usa el framework dinamico (ios-arm64)
+          MVK_FW="$PWD/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework"
+          if [ ! -f "$MVK_FW/MoltenVK" ]; then
+            echo "No se encontro el framework de iOS de MoltenVK. Contenido:"
+            find MoltenVK -maxdepth 6 \( -name "*.framework" -o -name "*.xcframework" -o -name "*.dylib" \)
+            exit 1
+          fi
+          lipo -info "$MVK_FW/MoltenVK"
+          echo "MVK_FW=$MVK_FW" >> "$GITHUB_ENV"
 
       - name: Step 1-7 - Recompile Xbox 360 PPC to C++ (build.sh)
         run: |
@@ -62,8 +71,7 @@ jobs:
           CCACHE_MAXSIZE: 3G
           CCACHE_COMPRESS: "1"
         run: |
-          MOLTENVK_DYLIB=$(find MoltenVK -name "libMoltenVK.dylib" | grep -i "ios" | head -1)
-          echo "Using MoltenVK: $MOLTENVK_DYLIB"
+          echo "Using MoltenVK: $MVK_FW/MoltenVK"
           cmake -S . -B build-ios -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -74,7 +82,7 @@ jobs:
             -DPES17_DIAGNOSTICS=OFF \
             -DPES17_USE_SDL=ON \
             -DVulkan_INCLUDE_DIR=/tmp/vulkan-headers/include \
-            -DVulkan_LIBRARY="$PWD/$MOLTENVK_DYLIB" \
+            -DVulkan_LIBRARY="$MVK_FW/MoltenVK" \
             -DCMAKE_CXX_FLAGS="-DPES17_VULKAN_DYNAMIC=1 -include $PWD/runtime/gpu/vulkan/loader.h -Wno-error"
           ninja -C build-ios -k 0 pes17
           ccache -s
@@ -90,9 +98,14 @@ jobs:
         run: |
           mkdir -p Payload/PES2017.app/Frameworks
           BIN_PATH=$(find build-ios -name "pes17" -type f | head -1)
+          test -n "$BIN_PATH" || { echo "No se encontro el ejecutable pes17"; exit 1; }
+          echo "Binario: $BIN_PATH"
           cp "$BIN_PATH" Payload/PES2017.app/pes17
-          MOLTENVK_DYLIB=$(find MoltenVK -name "libMoltenVK.dylib" | grep -i "ios" | head -1)
-          cp "$MOLTENVK_DYLIB" Payload/PES2017.app/Frameworks/libMoltenVK.dylib
+          # MoltenVK como framework (nombre de instalacion @rpath/MoltenVK.framework/MoltenVK)
+          mkdir -p Payload/PES2017.app/Frameworks/MoltenVK.framework
+          cp "$MVK_FW/MoltenVK" "$MVK_FW/Info.plist" Payload/PES2017.app/Frameworks/MoltenVK.framework/
+          # Copia con el nombre antiguo, por si el cargador dinamico hace dlopen("libMoltenVK.dylib")
+          cp "$MVK_FW/MoltenVK" Payload/PES2017.app/Frameworks/libMoltenVK.dylib
           install_name_tool -add_rpath "@executable_path/Frameworks" Payload/PES2017.app/pes17 || true
 
           cat > Payload/PES2017.app/Info.plist << 'PLIST'
@@ -141,6 +154,7 @@ jobs:
           ENT
 
           ldid -Sentitlements.plist Payload/PES2017.app/pes17
+          ldid -S Payload/PES2017.app/Frameworks/MoltenVK.framework/MoltenVK
           ldid -S Payload/PES2017.app/Frameworks/libMoltenVK.dylib
           zip -r9 PES2017-iOS.ipa Payload
 

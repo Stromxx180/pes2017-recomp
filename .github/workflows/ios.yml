@@ -83,7 +83,8 @@ jobs:
             -DPES17_USE_SDL=ON \
             -DVulkan_INCLUDE_DIR=/tmp/vulkan-headers/include \
             -DVulkan_LIBRARY="$MVK_FW/MoltenVK" \
-            -DCMAKE_CXX_FLAGS="-DPES17_VULKAN_DYNAMIC=1 -include $PWD/runtime/gpu/vulkan/loader.h -Wno-error"
+            -DCMAKE_CXX_FLAGS="-DPES17_VULKAN_DYNAMIC=1 -include $PWD/runtime/gpu/vulkan/loader.h -Wno-error" \
+            -DCMAKE_EXE_LINKER_FLAGS="-liconv"
           ninja -C build-ios -k 0 pes17
           ccache -s
 

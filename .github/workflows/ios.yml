@@ -1,0 +1,128 @@
+name: Build PES 2017 iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download default.xex from Fork Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p pes
+          gh release download --repo "${{ github.repository }}" --pattern "default.xex" --dir pes --clobber
+          ls -lh pes/default.xex
+
+      - name: Install build tools
+        run: |
+          brew install ninja cmake ldid
+
+      - name: Download MoltenVK & Vulkan Headers
+        run: |
+          curl -L -o MoltenVK.tar https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11/MoltenVK-all.tar
+          tar -xf MoltenVK.tar
+          git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
+
+      - name: Step 1-7 - Recompile Xbox 360 PPC to C++ (build.sh)
+        run: |
+          chmod +x build.sh
+          RECOMPILE_ONLY=1 CMAKE_CC=clang CMAKE_CXX=clang++ ./build.sh
+
+      - name: Patch CMakeLists.txt for iOS ARM64 + Dynamic Vulkan
+        run: |
+          python3 - << 'EOF'
+          s = open("CMakeLists.txt").read()
+          s = s.replace("if(ANDROID AND PES_ARMV82)", "if((ANDROID OR IOS) AND PES_ARMV82)")
+          s = s.replace("target_link_options(pes17 PRIVATE -rdynamic)", "if(NOT APPLE)\n    target_link_options(pes17 PRIVATE -rdynamic)\nendif()")
+          s = s.replace("add_subdirectory(tests)", "if(NOT IOS)\nadd_subdirectory(tests)\nendif()")
+          open("CMakeLists.txt", "w").write(s)
+          EOF
+
+      - name: Configure and Build pes17 for iOS (ARM64)
+        run: |
+          MOLTENVK_DYLIB=$(find MoltenVK -name "libMoltenVK.dylib" | grep -i "ios" | head -1)
+          echo "Using MoltenVK: $MOLTENVK_DYLIB"
+          cmake -S . -B build-ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPES17_DIAGNOSTICS=OFF \
+            -DPES17_USE_SDL=ON \
+            -DVulkan_INCLUDE_DIR=/tmp/vulkan-headers/include \
+            -DVulkan_LIBRARY="$PWD/$MOLTENVK_DYLIB" \
+            -DCMAKE_CXX_FLAGS="-DPES17_VULKAN_DYNAMIC=1 -include $PWD/runtime/gpu/vulkan/loader.h -Wno-error"
+          ninja -C build-ios pes17
+
+      - name: Package .app and Sign with 4GB RAM Entitlements (.ipa)
+        run: |
+          mkdir -p Payload/PES2017.app/Frameworks
+          BIN_PATH=$(find build-ios -name "pes17" -type f | head -1)
+          cp "$BIN_PATH" Payload/PES2017.app/pes17
+          MOLTENVK_DYLIB=$(find MoltenVK -name "libMoltenVK.dylib" | grep -i "ios" | head -1)
+          cp "$MOLTENVK_DYLIB" Payload/PES2017.app/Frameworks/libMoltenVK.dylib
+          install_name_tool -add_rpath "@executable_path/Frameworks" Payload/PES2017.app/pes17 || true
+
+          cat > Payload/PES2017.app/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>pes17</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.wilder.pes2017recomp</string>
+            <key>CFBundleName</key>
+            <string>PES 2017</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.2.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UIFileSharingEnabled</key>
+            <true/>
+            <key>LSSupportsOpeningDocumentsInPlace</key>
+            <true/>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+          </dict>
+          </plist>
+          PLIST
+
+          cat > entitlements.plist << 'ENT'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.developer.kernel.increased-memory-limit</key>
+            <true/>
+            <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+            <true/>
+          </dict>
+          </plist>
+          ENT
+
+          ldid -Sentitlements.plist Payload/PES2017.app/pes17
+          ldid -S Payload/PES2017.app/Frameworks/libMoltenVK.dylib
+          zip -r9 PES2017-iOS.ipa Payload
+
+      - name: Upload PES2017-iOS.ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PES2017-iOS-IPA
+          path: PES2017-iOS.ipa

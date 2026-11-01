@@ -28,6 +28,21 @@
 #endif
 #if defined(__aarch64__)
 #include <sys/ucontext.h>   // faulting host PC + registers in the crash log
+#if defined(__APPLE__)
+// Apple arm64: uc_mcontext is a POINTER and the registers live in __ss
+// (x0-x28 in __x[]; fp/lr/sp/pc via accessors that strip pointer auth).
+#define CTX_SS(uc)     ((uc)->uc_mcontext->__ss)
+#define CTX_PC(uc)     ((unsigned long long)__darwin_arm_thread_state64_get_pc(CTX_SS(uc)))
+#define CTX_SP(uc)     ((unsigned long long)__darwin_arm_thread_state64_get_sp(CTX_SS(uc)))
+#define CTX_REG(uc, i) ((i) < 29 ? (unsigned long long)CTX_SS(uc).__x[(i)] \
+                       : (i) == 29 ? (unsigned long long)__darwin_arm_thread_state64_get_fp(CTX_SS(uc)) \
+                                   : (unsigned long long)__darwin_arm_thread_state64_get_lr(CTX_SS(uc)))
+#else
+// Linux / Android aarch64
+#define CTX_PC(uc)     ((unsigned long long)(uc)->uc_mcontext.pc)
+#define CTX_SP(uc)     ((unsigned long long)(uc)->uc_mcontext.sp)
+#define CTX_REG(uc, i) ((unsigned long long)(uc)->uc_mcontext.regs[(i)])
+#endif
 #endif
 #include <fcntl.h>
 #include <unistd.h>
@@ -196,7 +211,7 @@ namespace
         // Async-signal-safe enough: plain reads + fprintf, like the rest here.
         {
             ucontext_t* uc = static_cast<ucontext_t*>(uctx);
-            const unsigned long long pc = uc->uc_mcontext.pc;
+            const unsigned long long pc = CTX_PC(uc);
             // This library's executable range, so code addresses below get a
             // mark (same /proc/self/maps walk as PrintMapping above).
             unsigned long long libFrom = 0, libTo = 0;
@@ -236,18 +251,18 @@ namespace
                          pc, t_name ? t_name : "?");
             for (int r = 0; r < 30; r += 2)
                 std::fprintf(stderr, "[E]   x%-2d %016llX  x%-2d %016llX\n",
-                             r, (unsigned long long)uc->uc_mcontext.regs[r],
-                             r + 1, (unsigned long long)uc->uc_mcontext.regs[r + 1]);
+                             r, CTX_REG(uc, r),
+                             r + 1, CTX_REG(uc, r + 1));
             std::fprintf(stderr, "[E]   x30 %016llX  sp %016llX\n",
-                         (unsigned long long)uc->uc_mcontext.regs[30],
-                         (unsigned long long)uc->uc_mcontext.sp);
+                         CTX_REG(uc, 30),
+                         CTX_SP(uc));
             std::fflush(stderr);
             // The return-address chain survives even when the fault PC is
             // garbage (as here): any word pointing into this library's code
             // is a caller and resolves offline. 32-bit words in the guest
             // code range read as guest callers directly.
             {
-                const unsigned long long sp = uc->uc_mcontext.sp;
+                const unsigned long long sp = CTX_SP(uc);
                 std::fprintf(stderr, "[E] stack at %016llX (<= is this library's code):\n", sp);
                 for (int i = 0; i < 64; i++)
                 {

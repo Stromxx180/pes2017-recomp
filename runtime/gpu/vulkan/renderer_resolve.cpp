@@ -929,8 +929,13 @@ void vk::renderer::Swap(uint32_t frontBuffer)
             }
 #endif
             g_drawLo = lo; g_drawHi = hi;
+#ifdef PES17_ANDROID
             g_noWriteBackCap = access((android::GetPaths().external + "/no_writeback_cap").c_str(), F_OK) == 0;
             g_noVertexReuse = access((android::GetPaths().external + "/no_vertex_reuse").c_str(), F_OK) == 0;
+#else
+            g_noWriteBackCap = false;
+            g_noVertexReuse = false;
+#endif
         }
     }
 #ifdef PES17_ANDROID

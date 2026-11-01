@@ -1,3 +1,12 @@
+// Host-system helpers declared in platform.h (POSIX: Linux, Android, iOS/macOS).
+#include "platform.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+#if defined(_WIN32)
+#error "The Windows implementation of platform.cpp is missing from this file; restore it from git history."
 #else
 #include <climits>
 #include <dlfcn.h>

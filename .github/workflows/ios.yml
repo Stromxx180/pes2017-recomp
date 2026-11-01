@@ -24,7 +24,15 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install ninja cmake ldid
+          brew install ninja cmake ldid ccache
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-ios-${{ github.run_id }}
+          restore-keys: |
+            ccache-ios-
 
       - name: Download MoltenVK & Vulkan Headers
         run: |
@@ -48,6 +56,11 @@ jobs:
           EOF
 
       - name: Configure and Build pes17 for iOS (ARM64)
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 3G
+          CCACHE_COMPRESS: "1"
         run: |
           MOLTENVK_DYLIB=$(find MoltenVK -name "libMoltenVK.dylib" | grep -i "ios" | head -1)
           echo "Using MoltenVK: $MOLTENVK_DYLIB"
@@ -56,12 +69,22 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DPES17_DIAGNOSTICS=OFF \
             -DPES17_USE_SDL=ON \
             -DVulkan_INCLUDE_DIR=/tmp/vulkan-headers/include \
             -DVulkan_LIBRARY="$PWD/$MOLTENVK_DYLIB" \
             -DCMAKE_CXX_FLAGS="-DPES17_VULKAN_DYNAMIC=1 -include $PWD/runtime/gpu/vulkan/loader.h -Wno-error"
-          ninja -C build-ios pes17
+          ninja -C build-ios -k 0 pes17
+          ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-ios-${{ github.run_id }}
 
       - name: Package .app and Sign with 4GB RAM Entitlements (.ipa)
         run: |
